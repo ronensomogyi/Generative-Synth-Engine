@@ -1,5 +1,5 @@
 from AutoEncoder import AutoEncoder
-from tensorflow.keras.datasets import mnist
+from tensorflow.keras.datasets import mnist # type: ignore
 import tensorflow as tf
 LEARNING_RATE = 0.0005
 BATCH_SIZE = 32
@@ -37,7 +37,10 @@ def train(x_train, learning_rate, batch_size, epochs):
 
 if __name__ == "__main__":
     x_train, _, _, _ = load_mnist()
-    autoencoder = train(x_train[:500], LEARNING_RATE, BATCH_SIZE, EPOCHS)
+    autoencoder = train(x_train[:10000], LEARNING_RATE, BATCH_SIZE, EPOCHS)
+    autoencoder.save("model")
+    autoencoder2 = AutoEncoder.load("model")
+    autoencoder2.summary()
 
 
 
