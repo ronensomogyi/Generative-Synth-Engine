@@ -1,15 +1,21 @@
 import os
 import pickle
 from keras import Model
-from keras.layers import Input, Conv2D, ReLU, BatchNormalization, Flatten, Dense, Reshape, Conv2DTranspose, Activation # type: ignore
+from keras.layers import Input, Conv2D, ReLU, BatchNormalization, Flatten, Dense, Reshape, Conv2DTranspose, Activation, Lambda # type: ignore
 from keras import backend as K
 from keras.optimizers import Adam # type: ignore
 from keras.losses import MeanSquaredError # type:ignore
 import numpy as np
+import tensorflow as tf
 
-class AutoEncoder:
+
+tf.compat.v1.disable_eager_execution()
+
+
+
+class VariationalAutoEncoder:
     """
-    Deep Convolutional autoencoder with mirrored 
+    Deep convolutional variational autoencoder with mirrored 
     encoder and decoder components
     """
 
@@ -82,10 +88,10 @@ class AutoEncoder:
         with open(parameters_path, "rb") as f:
             parameters = pickle.load(f)
 
-        autoencoder = AutoEncoder(*parameters) # * means positional arguments
+        vae = VariationalAutoEncoder(*parameters) # * means positional arguments
         weights_path = os.path.join(save_folder, "model.weights.h5")
-        autoencoder.load_weights(weights_path)
-        return autoencoder
+        vae.load_weights(weights_path)
+        return vae
 
     def load_weights(self, weights_path):
         self.model.load_weights(weights_path)
@@ -125,14 +131,15 @@ class AutoEncoder:
     def _build(self):
         self._build_encoder()
         self._build_decoder()
-        self._build_autoencoder()
+        self._build_variational_autoencoder()
 
 
 
-    def _build_autoencoder(self):
+    def _build_variational_autoencoder(self):
         model_input = self._model_input
         model_output = self.decoder(self.encoder(model_input))
-        self.model = Model(model_input, model_output, name="autoencoder")
+        self.model = Model(model_input, model_output, 
+                           name="variational_autoencoder")
 
 
     def _build_encoder(self):
@@ -177,14 +184,29 @@ class AutoEncoder:
 
     def _add_bottleneck(self, x):
         """ 
-        Flatten data and add bottleneck (Dense layer)
+        Flatten data and add bottleneck with Gaussian sampling (Dense layer)
         """
-
         self._shape_before_bottleneck = x.shape[1:] # width, height, num channels
         x = Flatten()(x)
-        x = Dense(self.latent_space_dim, name="encoder_output")(x)
+        self.mu = Dense(self.latent_space_dim, name="mu")(x)
+        self.log_variance = Dense(self.latent_space_dim, 
+                                  name="log_variance")(x)
+        # sample data poitn from Gaussian dist
+
+        def sample_point_from_normal_dist(args): # |args| = 2
+            mu, log_variance = args
+            epsilon = K.random_normal(shape=K.shape(mu), mean=0., 
+                                      stdev=1.)
+            sampled_point = mu + K.exp(log_variance / 2) * epsilon
+            return sampled_point
+        
+        x = Lambda(sample_point_from_normal_dist,
+                   output_shape=lambda input_shapes: input_shapes[0], 
+                   name="encoder_output")([self.mu, self.log_variance])
+        # x = Dense(self.latent_space_dim, name="encoder_output")(x)
         return x
     
+
 
     def _build_decoder(self):
         """
@@ -251,5 +273,12 @@ class AutoEncoder:
     """ End of Construction Methods"""
 
 
-
-
+if __name__ == "__main__":
+    autoencoder = VariationalAutoEncoder(
+        input_shape=(28,28,1), # shape of MNIST imgs
+        conv_filters=(32,64,64,64), # hyperparameters
+        conv_kernels=(3, 3, 3, 3),
+        conv_strides=(1, 2, 2, 1),
+        latent_space_dim=2 
+    )
+    autoencoder.summary()
