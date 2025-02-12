@@ -22,8 +22,8 @@ def load_mnist():
 def train(x_train, learning_rate, batch_size, epochs):
 
     autoencoder = AutoEncoder(
-        input_shape=(28,28,1),
-        conv_filters=(32,64,64,64),
+        input_shape=(28,28,1), # shape of MNIST imgs
+        conv_filters=(32,64,64,64), # hyperparameters
         conv_kernels=(3, 3, 3, 3),
         conv_strides=(1, 2, 2, 1),
         latent_space_dim=2 

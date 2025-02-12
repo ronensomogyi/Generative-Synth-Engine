@@ -11,6 +11,7 @@ def select_images (images, labels, num_images=10) :
     sample_labels = labels[sample_images_index]
     return sample_images, sample_labels
 
+
 def plot_reconstructed_images (images, reconstructed_images) :
     fig = plt.figure(figsize=(15, 3))
     num_images = len(images)
@@ -38,9 +39,10 @@ def plot_images_encoded_in_latent_space(latent_representations, sample_labels):
     plt.show()
 
 
-if __name__ == "__main__":
+
+def main():
     autoencoder = AutoEncoder.load("model")
-    x_train,y_train,x_test,y_test = load_mnist()
+    _,_,x_test,y_test = load_mnist()
 
     num_sample_images = 8
     sample_images, _ = select_images(x_test, y_test, num_sample_images) # images and labels
@@ -52,3 +54,7 @@ if __name__ == "__main__":
     sample_images, sample_labels = select_images(x_test, y_test, num_images)
     _, latent_reps = autoencoder.reconstruct(sample_images)
     plot_images_encoded_in_latent_space(latent_reps, sample_labels)
+
+
+if __name__ == "__main__":
+    main()
