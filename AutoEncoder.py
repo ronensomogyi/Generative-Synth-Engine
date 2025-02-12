@@ -1,8 +1,9 @@
 
 from keras import Model
-from keras.layers import Input, Conv2D, ReLU, BatchNormalization, Flatten, Dense # type: ignore
+from keras.layers import Input, Conv2D, ReLU, BatchNormalization, Flatten, Dense, Reshape, Conv2DTranspose, Activation
 from keras import backend as K
 
+import numpy as np
 
 class AutoEncoder:
     """
@@ -28,17 +29,85 @@ class AutoEncoder:
         self.model = None
 
         self._num_conv_layers = len(conv_filters)
+        self._shape_before_bottleneck = None
 
         self._build()
 
 
     def summary(self):
         self.encoder.summary()
+        self.decoder.summary()
 
     def _build(self):
         self._build_encoder()
-        #self._build_decoder()
+        self._build_decoder()
         #self._build_autoencoder()
+
+    def _build_decoder(self):
+        decoder_input = self._add_decoder_input()
+        dense_layer = self._add_dense_layer(decoder_input) 
+        reshape_layer = self._add_reshape_layer(dense_layer)
+        conv_transpose_layers = self._add_conv_transpose_layers(reshape_layer)
+        decoder_output = self._add_decoder_output(conv_transpose_layers)
+        self.decoder = Model(decoder_input, decoder_output, name="decoder") # instantiate keras model
+    
+    def _add_decoder_input(self):
+        return Input(shape=(self.latent_space_dim,), name="decoder_input") # need to pass latent dim as tuple
+    
+    def _add_dense_layer(self, decoder_input):
+        num_neurons = np.prod(self._shape_before_bottleneck) # prod[w, h, num_channels] -> k neurons
+        dense_layer = Dense(num_neurons, name="decoder_dense")(decoder_input)
+        return dense_layer
+
+    def _add_reshape_layer(self, dense_layer):
+        reshape_layer = Reshape(self._shape_before_bottleneck)(dense_layer)
+        return reshape_layer
+
+    def _add_conv_transpose_layers(self, x):
+        """ 
+        Add convolutional transpose blocks
+        """
+        # loop thru all comv layers in reverse order and stop at the first layer
+        for layer_index in reversed(range(1, self._num_conv_layers)):
+            x = self._add_conv_transpose_layer(layer_index, x)
+
+        return x
+
+    def _add_conv_transpose_layer(self, layer_index, x):
+        layer_num = self._num_conv_layers - layer_index
+        conv_transpose_layer = Conv2DTranspose(
+            filters=self.conv_filters[layer_index],
+            kernel_size=self.conv_kernels[layer_index],
+            strides=self.conv_strides[layer_index],
+            padding="same",
+            name=f"decoder_conv_transpose_layer_{layer_num}"
+        )
+        x = conv_transpose_layer(x)
+        x = ReLU(name=f"decoder_relu_{layer_num}")(x)
+        x = BatchNormalization(name=f"decoder_bn_{layer_num}")(x)
+        return x
+
+    def _add_decoder_output(self, x):
+        conv_transpose_layer = Conv2DTranspose(
+            filters=1, 
+            kernel_size=self.conv_kernels[0],
+            strides=self.conv_strides[0],
+            padding="same",
+            name=f"decoder_conv_transpose_layer_{self._num_conv_layers}"
+        )
+        x = conv_transpose_layer(x)
+        output_layer = Activation("sigmoid", name="sigmoid_layer")(x)
+        return output_layer
+    
+
+
+
+
+
+
+
+
+
 
 
     def _build_encoder(self):
@@ -47,9 +116,11 @@ class AutoEncoder:
         bottleneck = self._add_bottleneck(conv_layers)
         self.encoder = Model(encoder_input, bottleneck, name="encoder")
 
+
     def _add_encoder_input(self):
         return Input(shape=self.input_shape, name="encoder_input")
     
+
     def _add_conv_layers(self, encoder_input):
         """ Creates all conv blocks in encoder """
         x = encoder_input
@@ -57,6 +128,7 @@ class AutoEncoder:
             x = self._add_conv_layer(layer_index, x)
         return x # graph of layers
     
+
     def _add_conv_layer(self, layer_index, x):
         """ 
         Adds a convolutional block to a graph of layers 
@@ -76,6 +148,7 @@ class AutoEncoder:
         x = BatchNormalization(name=f"encoder_bn_{layer_num}")(x)
         return x
 
+
     def _add_bottleneck(self, x):
         """ 
         Flatten data and add bottleneck (Dense layer)
@@ -86,6 +159,8 @@ class AutoEncoder:
         x = Dense(self.latent_space_dim, name="encoder_output")(x)
         return x
     
+
+
 
 
 if __name__ == "__main__":
