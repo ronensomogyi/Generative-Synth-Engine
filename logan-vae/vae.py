@@ -1,3 +1,4 @@
+import argparse
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -5,7 +6,8 @@ import torchaudio
 import torchaudio.transforms as T
 import numpy as np
 import soundfile as sf
-import matplotlib.pyplot as plt
+import os
+from pathlib import Path
 
 # Load and process audio to MFCC
 def extract_mfcc(wav_file, sample_rate=16000, n_mfcc=13, n_fft=400, hop_length=160):
@@ -102,30 +104,61 @@ def train_vae(model, data, epochs=50, batch_size=32, learning_rate=1e-3):
 
         print(f"Epoch {epoch + 1}, Loss: {total_loss / len(dataloader)}")
 
+# Load all audio files from a directory (including nested folders)
+def load_audio_files(directory, sample_rate=16000, n_mfcc=13):
+    """Load all audio files from a directory and extract MFCC features."""
+    mfccs = []
+    for root, _, files in os.walk(directory):
+        for file in files:
+            if file.endswith(".wav"):  # Add other formats if needed
+                file_path = os.path.join(root, file)
+                try:
+                    mfcc = extract_mfcc(file_path, sample_rate=sample_rate, n_mfcc=n_mfcc)
+                    mfccs.append(mfcc.permute(1, 0))  # Shape: (time, n_mfcc)
+                except Exception as e:
+                    print(f"Error processing {file_path}: {e}")
+    return mfccs
+
+# Combine MFCCs into a single tensor
+def prepare_data(mfccs):
+    """Combine MFCCs into a single tensor and normalize."""
+    # Concatenate all MFCCs along the time dimension
+    combined = torch.cat(mfccs, dim=0)
+
+    # Normalize
+    combined = (combined - combined.mean()) / combined.std()
+
+    return combined
+
 # Example usage
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Train a VAE on MFCC representations.")
-    parser.add_argument("wav_file", type=str, help="Path to input WAV file")
+    parser.add_argument("audio_dir", type=str, help="Path to directory containing audio files")
+    parser.add_argument("--epochs", type=int, default=50, help="Number of training epochs")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training")
+    parser.add_argument("--learning_rate", type=float, default=1e-3, help="Learning rate for training")
+    parser.add_argument("--output_model", type=str, default="vae_mfcc.pth", help="Path to save the trained model")
     args = parser.parse_args()
 
-    # Extract MFCCs
-    mfcc = extract_mfcc(args.wav_file)
-    mfcc = mfcc.permute(1, 0)  # Shape (time, features)
+    # Load audio files and extract MFCCs
+    print("Loading audio files and extracting MFCCs...")
+    mfccs = load_audio_files(args.audio_dir)
 
-    # Normalize MFCCs
-    mfcc = (mfcc - mfcc.mean()) / mfcc.std()
+    # Prepare data for training
+    print("Preparing data for training...")
+    data = prepare_data(mfccs)
 
     # Flatten input for VAE
-    input_dim = mfcc.shape[1]
-    data = mfcc.view(mfcc.shape[0], -1)
+    input_dim = data.shape[1]
+    data = data.view(data.shape[0], -1)
 
     # Create and train VAE
+    print("Training VAE...")
     vae = VAE(input_dim)
-    train_vae(vae, data)
+    train_vae(vae, data, epochs=args.epochs, batch_size=args.batch_size, learning_rate=args.learning_rate)
 
     # Save the model
-    torch.save(vae.state_dict(), "vae_mfcc.pth")
-
-    print("VAE training complete! Model saved.")
+    torch.save(vae.state_dict(), args.output_model)
+    print(f"VAE training complete! Model saved to {args.output_model}.")
