@@ -1,6 +1,7 @@
 import argparse
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchaudio.transforms as T
 import soundfile as sf
 import numpy as np
@@ -56,7 +57,7 @@ def load_models(model_path, input_dim, latent_dim):
     return encoder, decoder
 
 # Generate audio
-def generate_audio(encoder, decoder, latent_dim, output_dim, n_mels=40, max_length=1000):
+def generate_audio(encoder, decoder, latent_dim, n_mels=128, max_length=1000, n_fft=1024):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     encoder.to(device)
     decoder.to(device)
@@ -69,6 +70,18 @@ def generate_audio(encoder, decoder, latent_dim, output_dim, n_mels=40, max_leng
     # Reshape the flattened spectrogram to (n_mels, max_length)
     fake_spectrogram = fake_spectrogram_flat.view(n_mels, max_length)
 
+    # Apply log scaling to emphasize higher frequencies
+    fake_spectrogram = torch.log1p(fake_spectrogram)
+
+    # Normalize the spectrogram to a fixed range
+    fake_spectrogram = (fake_spectrogram - fake_spectrogram.min()) / (fake_spectrogram.max() - fake_spectrogram.min())
+
+    # Upsample the mel spectrogram to the full frequency dimension
+    target_freq_dim = n_fft // 2 + 1  # Expected frequency dimension for GriffinLim
+    fake_spectrogram = fake_spectrogram.unsqueeze(0).unsqueeze(0)  # Add batch and channel dimensions
+    fake_spectrogram = F.interpolate(fake_spectrogram, size=(target_freq_dim, max_length), mode="bilinear")
+    fake_spectrogram = fake_spectrogram.squeeze(0).squeeze(0)  # Remove batch and channel dimensions
+
     # Visualize the spectrogram
     plt.imshow(fake_spectrogram, aspect="auto", origin="lower")
     plt.colorbar()
@@ -76,9 +89,14 @@ def generate_audio(encoder, decoder, latent_dim, output_dim, n_mels=40, max_leng
     plt.show()
 
     # Convert spectrogram back to waveform (e.g., using Griffin-Lim)
-    griffin_lim = T.GriffinLim(n_fft=400, hop_length=160)
+    griffin_lim = T.GriffinLim(n_fft=n_fft, hop_length=256)
     waveform = griffin_lim(fake_spectrogram.unsqueeze(0))  # Add batch dimension
-    return waveform.squeeze(0)  # Remove batch dimension
+    waveform = waveform.squeeze(0)  # Remove batch dimension
+
+    # Print waveform statistics
+    print(f"Waveform min: {waveform.min()}, max: {waveform.max()}, mean: {waveform.mean()}, std: {waveform.std()}")
+
+    return waveform
 
 # Main function
 if __name__ == "__main__":
@@ -86,9 +104,10 @@ if __name__ == "__main__":
     parser.add_argument("model_path", type=str, help="Path to the trained VAE-GAN model")
     parser.add_argument("--output_file", type=str, default="generated_audio.wav", help="Output WAV file name")
     parser.add_argument("--latent_dim", type=int, default=100, help="Dimension of the latent space")
-    parser.add_argument("--input_dim", type=int, required=True, help="Input dimension (flattened spectrogram size)")
-    parser.add_argument("--n_mels", type=int, default=40, help="Number of mel bins in the spectrogram")
+    parser.add_argument("--input_dim", type=int, default=128000, help="Input dimension (flattened spectrogram size)")
+    parser.add_argument("--n_mels", type=int, default=128, help="Number of mel bins in the spectrogram")
     parser.add_argument("--max_length", type=int, default=1000, help="Maximum length of spectrogram (time dimension)")
+    parser.add_argument("--n_fft", type=int, default=1024, help="FFT size for Griffin-Lim")
     args = parser.parse_args()
 
     # Define input and output dimensions (must match training)
@@ -96,12 +115,13 @@ if __name__ == "__main__":
     latent_dim = args.latent_dim
     n_mels = args.n_mels
     max_length = args.max_length
+    n_fft = args.n_fft
 
     # Load models
     encoder, decoder = load_models(args.model_path, input_dim, latent_dim)
 
     # Generate audio
-    generated_waveform = generate_audio(encoder, decoder, latent_dim, input_dim, n_mels, max_length)
+    generated_waveform = generate_audio(encoder, decoder, latent_dim, n_mels, max_length, n_fft)
 
     # Save generated audio
     sf.write(args.output_file, generated_waveform.numpy().T, 16000)

@@ -76,12 +76,13 @@ def gan_loss(discriminator_output, target):
 
 # Dataset class for audio files
 class AudioDataset(Dataset):
-    def __init__(self, audio_dir, sample_rate=16000, n_fft=400, hop_length=160, max_length=1000):
+    def __init__(self, audio_dir, sample_rate=16000, n_fft=1024, hop_length=160, max_length=1000, n_mels=128):
         self.audio_files = [os.path.join(audio_dir, f) for f in os.listdir(audio_dir) if f.endswith(".wav")]
         self.sample_rate = sample_rate
         self.n_fft = n_fft
         self.hop_length = hop_length
-        self.max_length = max_length  # Maximum length of spectrogram
+        self.max_length = max_length
+        self.n_mels = n_mels
 
     def __len__(self):
         return len(self.audio_files)
@@ -94,7 +95,12 @@ class AudioDataset(Dataset):
         if sr != self.sample_rate:
             resampler = T.Resample(sr, self.sample_rate)
             waveform = resampler(waveform)
-        spectrogram_transform = T.Spectrogram(n_fft=self.n_fft, hop_length=self.hop_length)
+        spectrogram_transform = T.MelSpectrogram(
+            sample_rate=self.sample_rate,
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            n_mels=self.n_mels,
+        )
         spectrogram = spectrogram_transform(waveform)
 
         # Pad or truncate spectrogram to fixed length
@@ -110,7 +116,7 @@ class AudioDataset(Dataset):
         return spectrogram.reshape(-1)  # Use reshape instead of view
 
 # Training function
-def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, latent_dim=100, lr=0.0002):
+def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, latent_dim=256, lr=1e-4, beta=0.1):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     encoder.to(device)
     decoder.to(device)
@@ -130,7 +136,9 @@ def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, laten
             optimizer_D.zero_grad()
             z, mu, log_var = encoder(real_data)
             recon_data = decoder(z)
-            vae_l = vae_loss(recon_data, real_data, mu, log_var)
+            recon_loss = nn.MSELoss()(recon_data, real_data)
+            kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
+            vae_l = recon_loss + beta * kl_loss  # Adjust beta for KL loss
             vae_l.backward()
             optimizer_E.step()
             optimizer_D.step()
