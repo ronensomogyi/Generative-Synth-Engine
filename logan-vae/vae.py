@@ -78,10 +78,11 @@ class VAE(nn.Module):
         return decoded, mu, log_var
 
 # Training function
-def train_vae(model, data, epochs=50, batch_size=32, learning_rate=1e-3):
+def train_vae(model, data, epochs=50, batch_size=32, learning_rate=1e-4, beta=0.1):
     """Train the VAE on MFCC data."""
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    loss_fn = nn.MSELoss()  # TODO: Consider KL divergence + reconstruction loss
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)  # Learning rate scheduler
+    loss_fn = nn.MSELoss()
 
     dataset = torch.utils.data.TensorDataset(data)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
@@ -96,12 +97,14 @@ def train_vae(model, data, epochs=50, batch_size=32, learning_rate=1e-3):
             # Compute loss
             recon_loss = loss_fn(recon, batch)
             kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
-            loss = recon_loss + kl_loss  # TODO: Adjust weighting of KL loss
+            loss = recon_loss + beta * kl_loss  # Adjust beta for KL loss
 
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # Gradient clipping
             optimizer.step()
             total_loss += loss.item()
 
+        scheduler.step()  # Update learning rate
         print(f"Epoch {epoch + 1}, Loss: {total_loss / len(dataloader)}")
 
 # Load all audio files from a directory (including nested folders)
