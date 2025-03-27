@@ -5,7 +5,7 @@ import torchaudio
 import torchaudio.transforms as T
 import soundfile as sf
 # Ensure VAE and MFCC extraction functions are available
-from vae import VAE, extract_mfcc
+from vae import VAE, extract_mel
 import matplotlib.pyplot as plt
 
 

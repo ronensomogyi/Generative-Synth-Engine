@@ -9,11 +9,25 @@ import soundfile as sf
 import os
 from pathlib import Path
 
-# Load and process audio to MEL Spectrogram
+# -------------------------
+# 1. Extract Mel Spectrogram
+# -------------------------
 
 
 def extract_mel(wav_file, sample_rate=16000, n_fft=400, hop_length=160, n_mels=64):
-    """Extract mel spectrogram from an audio file."""
+    """
+    Extracts a mel spectrogram from an audio file.
+
+    Args:
+        wav_file (str): Path to the WAV file.
+        sample_rate (int): Target sample rate.
+        n_fft (int): FFT window size.
+        hop_length (int): Hop length.
+        n_mels (int): Number of mel bins.
+
+    Returns:
+        torch.Tensor: Mel spectrogram of shape (n_mels, time).
+    """
     waveform, sr = sf.read(wav_file)
 
     # Convert to mono if stereo
@@ -35,22 +49,28 @@ def extract_mel(wav_file, sample_rate=16000, n_fft=400, hop_length=160, n_mels=6
         hop_length=hop_length,
         n_mels=n_mels
     )
-    mel_spec = mel_transform(waveform)
-
+    mel_spec = mel_transform(waveform)  # shape: (n_mels, time)
     return mel_spec
 
-# Define the Variational Autoencoder
+# -------------------------
+# 2. Define the Variational Autoencoder
+# -------------------------
 
 
 class VAE(nn.Module):
     def __init__(self, input_dim, latent_dim=2):
-        """Variational Autoencoder (VAE) for mel spectrogram encoding."""
+        """
+        Variational Autoencoder (VAE) for mel spectrogram encoding.
+
+        Args:
+            input_dim (int): Dimensionality of the input (number of mel bins).
+            latent_dim (int): Dimensionality of the latent space.
+        """
         super(VAE, self).__init__()
 
-        # Encoder network
+        # Encoder network: compress each mel frame to a lower-dimensional latent vector
         self.encoder = nn.Sequential(
-            # TODO: Adjust hidden layer sizes if needed
-            nn.Linear(input_dim, 128),
+            nn.Linear(input_dim, 128),  # Adjust hidden layer sizes if needed
             nn.ReLU(),
             nn.Linear(128, 64),
             nn.ReLU()
@@ -60,14 +80,14 @@ class VAE(nn.Module):
         self.mu = nn.Linear(64, latent_dim)
         self.log_var = nn.Linear(64, latent_dim)
 
-        # Decoder network
+        # Decoder network: reconstruct mel frame from latent vector
         self.decoder = nn.Sequential(
             nn.Linear(latent_dim, 64),
             nn.ReLU(),
             nn.Linear(64, 128),
             nn.ReLU(),
             nn.Linear(128, input_dim),  # Output same shape as input
-            nn.Tanh()  # Tanh keeps values between -1 and 1
+            nn.Tanh()  # Tanh constrains output values between -1 and 1
         )
 
     def reparameterize(self, mu, log_var):
@@ -85,13 +105,15 @@ class VAE(nn.Module):
         decoded = self.decoder(z)
         return decoded, mu, log_var
 
-# Training function
+# -------------------------
+# 3. Training Function
+# -------------------------
 
 
 def train_vae(model, data, epochs=50, batch_size=32, learning_rate=1e-3):
     """Train the VAE on mel spectrogram data."""
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    loss_fn = nn.MSELoss()  # Using MSE loss; can combine with KL divergence
+    loss_fn = nn.MSELoss()  # Using MSE for reconstruction; KL divergence is added separately
 
     dataset = torch.utils.data.TensorDataset(data)
     dataloader = torch.utils.data.DataLoader(
@@ -107,7 +129,7 @@ def train_vae(model, data, epochs=50, batch_size=32, learning_rate=1e-3):
             # Compute reconstruction loss and KL divergence loss
             recon_loss = loss_fn(recon, batch)
             kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
-            loss = recon_loss + kl_loss  # You might adjust the weighting of the KL term
+            loss = recon_loss + kl_loss  # Optionally, weight the KL term
 
             loss.backward()
             optimizer.step()
@@ -115,15 +137,25 @@ def train_vae(model, data, epochs=50, batch_size=32, learning_rate=1e-3):
 
         print(f"Epoch {epoch + 1}, Loss: {total_loss / len(dataloader)}")
 
-# Load all audio files from a directory (including nested folders)
+# -------------------------
+# 4. Load and Prepare Data
+# -------------------------
 
 
 def load_audio_files(directory, sample_rate=16000, n_mels=64, n_fft=400, hop_length=160):
-    """Load all audio files from a directory and extract mel spectrograms."""
+    """
+    Load all audio files from a directory and extract mel spectrograms.
+
+    Args:
+        directory (str): Root directory containing audio files.
+
+    Returns:
+        List[torch.Tensor]: List of mel spectrogram tensors with shape (time, n_mels).
+    """
     mels = []
     for root, _, files in os.walk(directory):
         for file in files:
-            if file.endswith(".wav"):  # Add other formats if needed
+            if file.endswith(".wav"):
                 file_path = os.path.join(root, file)
                 try:
                     mel_spec = extract_mel(
@@ -134,19 +166,17 @@ def load_audio_files(directory, sample_rate=16000, n_mels=64, n_fft=400, hop_len
                     print(f"Error processing {file_path}: {e}")
     return mels
 
-# Combine mel spectrograms into a single tensor
-
 
 def prepare_data(mels):
     """Combine mel spectrograms into a single tensor and normalize."""
-    # Concatenate along the time dimension
     combined = torch.cat(mels, dim=0)
-    # Normalize the combined data
     combined = (combined - combined.mean()) / combined.std()
     return combined
 
 
-# Example usage
+# -------------------------
+# 5. Main: Training the VAE
+# -------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Train a VAE on mel spectrogram representations.")
@@ -162,24 +192,20 @@ if __name__ == "__main__":
                         default="vae_mel.pth", help="Path to save the trained model")
     args = parser.parse_args()
 
-    # Load audio files and extract mel spectrograms
     print("Loading audio files and extracting mel spectrograms...")
     mels = load_audio_files(args.audio_dir)
 
-    # Prepare data for training
     print("Preparing data for training...")
     data = prepare_data(mels)
 
-    # Flatten input for the VAE
+    # Flatten each mel frame so that input_dim equals the number of mel bins
     input_dim = data.shape[1]
     data = data.view(data.shape[0], -1)
 
-    # Create and train the VAE
     print("Training VAE...")
     vae = VAE(input_dim)
     train_vae(vae, data, epochs=args.epochs,
               batch_size=args.batch_size, learning_rate=args.learning_rate)
 
-    # Save the trained model
     torch.save(vae.state_dict(), args.output_model)
     print(f"VAE training complete! Model saved to {args.output_model}.")
