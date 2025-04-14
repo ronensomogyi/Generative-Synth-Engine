@@ -3,11 +3,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class VAE(nn.Module):
-    def __init__(self, input_channels=1, latent_dim=20):
+    def __init__(self, input_channels=1, latent_dim=20, input_dim=(28, 28)):
         super(VAE, self).__init__()
+
+        self.input_channels = input_channels
+        self.latent_dim = latent_dim
+        self.input_dim = input_dim # (height, width)
+        self.input_height, self.input_width = input_dim
         
         # Encoder
-        self.encoder = nn.Sequential(
+        self.features = nn.Sequential(
             nn.Conv2d(input_channels, 32, kernel_size=3, stride=2, padding=1),  # Conv layer 1
             nn.ReLU(),
             nn.BatchNorm2d(32),
@@ -16,13 +21,19 @@ class VAE(nn.Module):
             nn.BatchNorm2d(64),
             nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),  # Conv layer 3
             nn.ReLU(),
-            nn.BatchNorm2d(128),
-            nn.Flatten()
+            nn.BatchNorm2d(128)    
         )
+
+        self.flatten = nn.Flatten()
         
-        # Compute the shape before bottleneck
-        self._shape_before_bottleneck = (128, 4, 4)  # Adjust based on input size
-        self.bottleneck_dim = 128 * 4 * 4
+        # Compute the shape before bottleneck dynamically based on input size
+        with torch.no_grad():
+            dummy = torch.zeros(1, self.input_channels, self.input_height, self.input_width)
+            dummy_features = self.features(dummy)
+            self._shape_before_bottleneck = dummy_features.shape[1:]  # (C, H, W)
+            self.bottleneck_dim = 1
+            for dim in self._shape_before_bottleneck:
+                self.bottleneck_dim *= dim
         
         # Latent space
         self.fc_mu = nn.Linear(self.bottleneck_dim, latent_dim)
@@ -30,6 +41,7 @@ class VAE(nn.Module):
         
         # Decoder
         self.decoder_input = nn.Linear(latent_dim, self.bottleneck_dim)
+
         self.decoder = nn.Sequential(
             nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1),  # Deconv layer 1
             nn.ReLU(),
@@ -42,9 +54,13 @@ class VAE(nn.Module):
         )
 
     def encode(self, x):
-        x = self.encoder(x)
+        x = self.features(x)
+        x = self.flatten(x)
+
+
         mu = self.fc_mu(x)
         sigma = self.fc_sigma(x)
+
         return mu, sigma
 
     def reparameterize(self, mu, sigma):
@@ -53,9 +69,12 @@ class VAE(nn.Module):
 
     def decode(self, z):
         z = self.decoder_input(z)
+
         z = z.view(-1, *self._shape_before_bottleneck)
+
         decoded = self.decoder(z)
-        return F.interpolate(decoded, size=(28, 28), mode="bilinear", align_corners=False)
+        
+        return F.interpolate(decoded, size=self.input_dim, mode="bilinear", align_corners=False)
 
     def forward(self, x):
         mu, sigma = self.encode(x)

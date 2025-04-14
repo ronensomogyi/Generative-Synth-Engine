@@ -1,16 +1,15 @@
 import torch
-import torchvision.datasets as datasets
-from torchaudio.datasets import NSynth
-import torchaudio
-from torchvision import transforms
+
+
+
+
 from torch import nn
 from torch.utils.data import DataLoader
 from model import VAE
 from tqdm import tqdm
-import librosa
-import os
-import numpy as np
-import nsynth
+
+
+from nsynth_dataset import NsynthDataset
 # Config
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -26,21 +25,6 @@ BATCH_SIZE = 32
 LEARNING_RATE = 1e-4  # Reduced learning rate for stability
 
 
-def waveform_to_mel_spec(sample):
-    waveform, sample_rate, label, note, instrument, attributes = sample
-    
-    # Create a MelSpectrogram transform. You can tweak parameters as needed.
-    mel_transform = torchaudio.transforms.MelSpectrogram(
-        sample_rate=sample_rate,
-        n_fft=2048,
-        hop_length=512,
-        n_mels=128
-    )
-
-    mel_spec = mel_transform(waveform)
-    log_mel_spec = torch.log(mel_spec + 1e-9)  # avoid log(0)
-
-    return log_mel_spec, label
 
 
 def train(train_loader, model, optimizer, loss_fn):
@@ -56,7 +40,7 @@ def train(train_loader, model, optimizer, loss_fn):
 
         for i, (x, _) in loop:
             # forward pass
-            x = x.to(DEVICE).view(x.shape[0], 1, 28, 28)  # Reshape for Conv2D input
+            x = x.to(DEVICE).view(x.shape[0], 1, 128, 126)  # Reshape for Conv2D input
             x_reconstructed, mu, sigma = model(x)
 
             # loss
@@ -89,17 +73,14 @@ def main():
     #                         download=True)
     
 
-    dataset = NSynth(
-        root="dataset/", 
-        split="train", 
-        download=True,
-        transform=waveform_to_mel_spec
-    )
+    dataset = NsynthDataset(path="/Volumes/ronen_usb/nsynth-train")
+    input_dim = dataset[0][0].shape[1:]  # Get the shape of the first sample
+
     train_loader = DataLoader(dataset=dataset,
                             batch_size=BATCH_SIZE,
                             shuffle=True)
 
-    model = VAE(input_channels=INPUT_CHANNELS, latent_dim=LATENT_DIM).to(DEVICE)
+    model = VAE(input_channels=INPUT_CHANNELS, latent_dim=LATENT_DIM, input_dim=input_dim).to(DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
     loss_fn = nn.MSELoss(reduction='sum') # reconstruction
 
