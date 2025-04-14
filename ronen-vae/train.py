@@ -18,11 +18,12 @@ INPUT_DIM = 784
 H_DIM = 200
 Z_DIM = 20
 INPUT_CHANNELS = 1  # Grayscale images
-LATENT_DIM = 20
+LATENT_DIM = 2
 
 NUM_EPOCHS = 10
 BATCH_SIZE = 32
-LEARNING_RATE = 1e-3  # Reduced learning rate for stability
+LEARNING_RATE = 1e-4  # Reduced learning rate for stability
+
 KL_COEF = 0.1  # Coefficient for KL divergence loss
 RECON_COEF = 0.9  # Coefficient for reconstruction loss
 
@@ -32,7 +33,7 @@ RECON_COEF = 0.9  # Coefficient for reconstruction loss
 def train(train_loader, model, optimizer, loss_fn):
 
     alpha = RECON_COEF  # Hyperparameter to scale the KL divergence loss
-    beta = KL_COEF
+    beta = epoch / 10.0  # KL annealing coefficient
 
     best_loss = float('inf')  # Initialize best loss to infinity
     best_epoch = -1  # Track the epoch with the lowest loss

@@ -6,9 +6,13 @@ from nsynth_dataset import NsynthDataset
 import sounddevice as sd
 import torchaudio
 
-def load_model(filepath, input_channels=1, latent_dim=20, input_dim=(128, 126)):
+
+LATENT_DIM = 2
+
+def load_model(filepath, input_channels=1, input_dim=(128, 126)):
     """Load the VAE model with pre-trained weights."""
-    vae = VAE(input_channels=input_channels, latent_dim=latent_dim, input_dim=input_dim)
+
+    vae = VAE(input_channels=input_channels, latent_dim=LATENT_DIM, input_dim=input_dim)
     vae.load_weights(filepath)
     return vae
 
@@ -19,6 +23,7 @@ def infer(vae, input_tensor):
         reconstructed, mu, sigma = vae(input_tensor)
     return reconstructed, mu, sigma
 
+
 def select_samples(dataset, num_samples=10):
     """Select a random subset of samples from the dataset."""
     indices = np.random.choice(len(dataset), num_samples, replace=False)
@@ -26,6 +31,7 @@ def select_samples(dataset, num_samples=10):
     images = torch.stack([sample[0] for sample in samples])  # Stack spectrograms
     labels = [sample[1] for sample in samples]  # Collect labels
     return images, labels
+
 
 def plot_reconstructed_images(images, reconstructed_images):
     """Plot original and reconstructed images side by side."""
@@ -54,12 +60,12 @@ def plot_images_encoded_in_latent_space(latent_representations, sample_labels):
     plt.colorbar()
     plt.show()
 
-def sample_and_play_from_latent_space(vae, num_samples=5, latent_dim=20, sample_rate=16000):
+def sample_and_play_from_latent_space(vae, num_samples=5, latent_dim=LATENT_DIM, sample_rate=16000):
     """Sample random points from the latent space, decode them, and play the resulting spectrograms."""
     vae.eval()  # Ensure the model is in evaluation mode
     with torch.no_grad():
         # Sample random points from a standard normal distribution
-        random_latent_vectors = torch.randn(num_samples, latent_dim).to("cpu")
+        random_latent_vectors = torch.randn(num_samples, LATENT_DIM).to("cpu")
         # Decode the latent vectors into spectrograms
         decoded_spectrograms = vae.decode(random_latent_vectors)
     
@@ -86,7 +92,7 @@ if __name__ == "__main__":
 
     # Load pre-trained VAE
     model_path = "./weights/vae_weights.pth"
-    vae = load_model(model_path, input_channels=1, latent_dim=20, input_dim=(128, 126))
+    vae = load_model(model_path, input_channels=1, input_dim=(128, 126))
 
     # Select a subset of samples
     sample_images, sample_labels = select_samples(nsynth, num_samples=10)
@@ -110,4 +116,4 @@ if __name__ == "__main__":
     # plot_images_encoded_in_latent_space(latent_mu.cpu().numpy(), all_labels)
 
     # Sample and play from the latent space
-    sample_and_play_from_latent_space(vae, num_samples=5, latent_dim=20, sample_rate=16000)
+    sample_and_play_from_latent_space(vae, num_samples=5, latent_dim=LATENT_DIM, sample_rate=16000)
