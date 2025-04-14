@@ -6,8 +6,12 @@ import torchaudio
 from model import VAE
 
 
-def load_model(filepath, input_channels=1, latent_dim=20, input_dim=(128, 126)):
+import os
+
+def load_model(filepath, input_channels=1, latent_dim=2, input_dim=(128, 126)):
     """Load the VAE model with pre-trained weights."""
+    if not os.path.isfile(filepath):
+        raise FileNotFoundError(f"Model weights file not found at: {filepath}")
     vae = VAE(input_channels=input_channels, latent_dim=latent_dim, input_dim=input_dim)
     vae.load_weights(filepath)
     return vae
@@ -67,9 +71,9 @@ def visualize_latent_space(vae, latent_dim=20, sample_rate=16000):
 
 
 if __name__ == "__main__":
-    # Load the pre-trained VAE model with latent_dim 20 to match the checkpoint
+    # Load the pre-trained VAE model with latent_dim 2 to match the checkpoint
     model_path = "./weights/vae_weights.pth"
-    vae = load_model(model_path, input_channels=1, latent_dim=20, input_dim=(128, 126))
+    vae = load_model(model_path, input_channels=1, latent_dim=2, input_dim=(128, 126))
 
-    # Visualize the latent space using the first two dimensions of the 20D latent space
-    visualize_latent_space(vae, latent_dim=20, sample_rate=16000)
+    # Visualize the latent space using both dimensions of the 2D latent space
+    visualize_latent_space(vae, latent_dim=2, sample_rate=16000)
