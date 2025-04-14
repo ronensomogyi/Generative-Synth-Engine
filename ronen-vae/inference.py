@@ -64,13 +64,20 @@ def sample_and_play_from_latent_space(vae, num_samples=5, latent_dim=20, sample_
         decoded_spectrograms = vae.decode(random_latent_vectors)
     
     # Convert decoded spectrograms back to waveforms and play them
+    mel_to_stft = torchaudio.transforms.InverseMelScale(
+        n_stft=1025, n_mels=128, sample_rate=sample_rate
+    )
+    griffin_lim = torchaudio.transforms.GriffinLim(n_fft=2048, hop_length=512)
+
     for i, spectrogram in enumerate(decoded_spectrograms):
         # Inverse log-mel spectrogram
         mel_spec = torch.exp(spectrogram) - 1e-9
-        # Use torchaudio's Griffin-Lim algorithm to reconstruct the waveform
-        waveform = torchaudio.transforms.GriffinLim(n_fft=2048, hop_length=512)(mel_spec)
+        # Convert Mel spectrogram to STFT
+        stft_spec = mel_to_stft(mel_spec)
+        # Use Griffin-Lim to reconstruct the waveform
+        waveform = griffin_lim(stft_spec)
         print(f"Playing sample {i + 1}/{num_samples}...")
-        sd.play(waveform.numpy(), samplerate=sample_rate)
+        sd.play(waveform.squeeze().numpy(), samplerate=sample_rate)
         sd.wait()  # Wait until the sound finishes playing
 
 if __name__ == "__main__":
@@ -93,14 +100,14 @@ if __name__ == "__main__":
     # Plot original and reconstructed images
     plot_reconstructed_images(sample_images, reconstructed_images.cpu())
 
-    print("visualize latent space")
-    # Visualize latent space
-    all_images = torch.stack([nsynth[i][0] for i in range(len(nsynth))]).to(torch.float32)
-    all_labels = [nsynth[i][1] for i in range(len(nsynth))]
-    print("visualize latent space")
-    with torch.no_grad():
-        _, latent_mu, _ = vae(all_images)
-    plot_images_encoded_in_latent_space(latent_mu.cpu().numpy(), all_labels)
+    # print("visualize latent space")
+    # # Visualize latent space
+    # all_images = torch.stack([nsynth[i][0] for i in range(len(nsynth))]).to(torch.float32)
+    # all_labels = [nsynth[i][1] for i in range(len(nsynth))]
+    # print("visualize latent space")
+    # with torch.no_grad():
+    #     _, latent_mu, _ = vae(all_images)
+    # plot_images_encoded_in_latent_space(latent_mu.cpu().numpy(), all_labels)
 
     # Sample and play from the latent space
     sample_and_play_from_latent_space(vae, num_samples=5, latent_dim=20, sample_rate=16000)

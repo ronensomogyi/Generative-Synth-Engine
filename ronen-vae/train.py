@@ -22,15 +22,17 @@ LATENT_DIM = 20
 
 NUM_EPOCHS = 10
 BATCH_SIZE = 32
-LEARNING_RATE = 1e-4  # Reduced learning rate for stability
+LEARNING_RATE = 1e-3  # Reduced learning rate for stability
+KL_COEF = 0.1  # Coefficient for KL divergence loss
+RECON_COEF = 0.9  # Coefficient for reconstruction loss
 
 
 
 
 def train(train_loader, model, optimizer, loss_fn):
 
-    alpha = 0.9  # Hyperparameter to scale the KL divergence loss
-    beta = 0.1
+    alpha = RECON_COEF  # Hyperparameter to scale the KL divergence loss
+    beta = KL_COEF
 
     best_loss = float('inf')  # Initialize best loss to infinity
     best_epoch = -1  # Track the epoch with the lowest loss
@@ -67,11 +69,6 @@ def train(train_loader, model, optimizer, loss_fn):
 
 def main():
 
-    # dataset = datasets.MNIST(root="dataset/", 
-    #                         train=True, 
-    #                         transform=transforms.ToTensor(), 
-    #                         download=True)
-    
 
     dataset = NsynthDataset(path="/Volumes/ronen_usb/nsynth-train")
     input_dim = dataset[0][0].shape[1:]  # Get the shape of the first sample
