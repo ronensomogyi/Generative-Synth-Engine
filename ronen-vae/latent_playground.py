@@ -6,6 +6,7 @@ import torchaudio
 from model import VAE
 from nsynth_dataset import NsynthDataset
 
+
 def load_model(filepath, input_channels=1, latent_dim=20, input_dim=(128, 126)):
     """Load the VAE model with pre-trained weights."""
     vae = VAE(input_channels=input_channels, latent_dim=latent_dim, input_dim=input_dim)
