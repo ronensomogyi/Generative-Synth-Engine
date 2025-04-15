@@ -12,7 +12,7 @@ from tqdm import tqdm
 from nsynth_dataset import NsynthDataset
 # Config
 
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("mps" if torch.mps.is_available() else "cpu")
 
 INPUT_DIM = 784
 H_DIM = 200
