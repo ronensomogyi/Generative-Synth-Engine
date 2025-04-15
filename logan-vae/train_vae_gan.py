@@ -31,6 +31,7 @@ class Encoder(nn.Module):
         h = self.model(x)
         mu = self.mu(h)
         log_var = self.log_var(h)
+        log_var = torch.clamp(log_var, min=-10.0, max=10.0)  # Clamp log_var to prevent KL blowup
         z = self.reparameterize(mu, log_var)
         return z, mu, log_var
 
@@ -138,8 +139,11 @@ def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, laten
             recon_data = decoder(z)
             recon_loss = nn.MSELoss()(recon_data, real_data)
             kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp()) / batch_size
-            vae_l = recon_loss + beta * kl_loss
+            beta_schedule = min(1.0, epoch / 50)  # KL annealing
+            vae_l = recon_loss + beta_schedule * beta * kl_loss
             vae_l.backward()
+            torch.nn.utils.clip_grad_norm_(encoder.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_(decoder.parameters(), 1.0)
             optimizer_E.step()
             optimizer_D.step()
 
@@ -166,11 +170,12 @@ def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, laten
             fake_output = discriminator(fake_data)
             loss_G = gan_loss(fake_output, real_labels)
             loss_G.backward()
+            torch.nn.utils.clip_grad_norm_(decoder.parameters(), 1.0)
             optimizer_D.step()
 
         print(f"Epoch {epoch + 1}, Loss VAE: {vae_l.item():.4f}, Loss D: {loss_D.item():.4f}, Loss G: {loss_G.item():.4f}")
 
-        # Save spectrogram visual every 10 epochs
+ # Save spectrogram visual every 10 epochs
         if (epoch + 1) % 10 == 0:
             decoder.eval()
             with torch.no_grad():
@@ -218,7 +223,6 @@ def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, laten
                 sf.write(f"debug_audio/generated_epoch_{epoch+1}.wav", waveform.numpy(), 16000)
                 print(f"[Saved] debug_audio/generated_epoch_{epoch+1}.wav")
 
-
 # Main
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a VAE-GAN on audio data.")
@@ -226,7 +230,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--latent_dim", type=int, default=100)
     parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--learning_rate", type=float, default=0.0002)
+    parser.add_argument("--learning_rate", type=float, default=0.00001)
     parser.add_argument("--output_model", type=str, default="vae_gan.pth")
     parser.add_argument("--max_length", type=int, default=1000)
     args = parser.parse_args()
