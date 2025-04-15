@@ -43,7 +43,7 @@ class Decoder(nn.Module):
             nn.Linear(128, 256),
             nn.ReLU(),
             nn.Linear(256, output_dim),
-            nn.Tanh(),
+            nn.ReLU(),  # Instead of Tanh()
         )
 
     def forward(self, z):
@@ -175,12 +175,49 @@ def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, laten
             decoder.eval()
             with torch.no_grad():
                 z = torch.randn(1, latent_dim).to(device)
-                fake_spec = decoder(z).cpu().view(128, -1)
-                plt.imshow(fake_spec, aspect="auto", origin="lower")
-                plt.title(f"Epoch {epoch + 1}")
+                fake_flat = decoder(z).cpu().squeeze(0)
+                fake_spec = fake_flat.view(128, -1)
+
+                print(f"[Epoch {epoch+1}] Fake spectrogram stats: min={fake_spec.min():.4f}, max={fake_spec.max():.4f}, mean={fake_spec.mean():.4f}, std={fake_spec.std():.4f}")
+
+                # Denormalize the spectrogram
+                denorm_fake_spec = fake_spec * global_std + global_mean
+                denorm_fake_spec = torch.relu(denorm_fake_spec)
+
+                # Save raw (denorm) and normalized spectrogram
+                plt.figure(figsize=(10, 4))
+                plt.imshow(denorm_fake_spec, aspect="auto", origin="lower")
+                plt.title(f"Denormalized Spectrogram (Epoch {epoch + 1})")
                 plt.colorbar()
-                plt.savefig(f"sample_spectrogram_{epoch+1}.png")
+                plt.savefig(f"denorm_spectrogram_epoch_{epoch+1}.png")
                 plt.close()
+
+                plt.figure(figsize=(10, 4))
+                plt.imshow(fake_spec, aspect="auto", origin="lower")
+                plt.title(f"Raw Decoder Output (Epoch {epoch + 1})")
+                plt.colorbar()
+                plt.savefig(f"raw_decoder_output_epoch_{epoch+1}.png")
+                plt.close()
+
+                # Optional: Try waveform inversion
+                n_fft = 1024
+                max_length = fake_spec.shape[1]
+                upsampled = fake_spec.unsqueeze(0).unsqueeze(0)
+                upsampled = torch.nn.functional.interpolate(upsampled, size=(n_fft // 2 + 1, max_length), mode="bilinear")
+                upsampled = upsampled.squeeze(0).squeeze(0)
+
+                # Try Griffin-Lim
+                print("[Debug] Running Griffin-Lim for audio inversion")
+                griffin_lim = T.GriffinLim(n_fft=n_fft, hop_length=256)
+                waveform = griffin_lim(upsampled.unsqueeze(0)).squeeze(0)
+
+                print(f"[Waveform] min={waveform.min():.4f}, max={waveform.max():.4f}, mean={waveform.mean():.4f}, std={waveform.std():.4f}")
+
+                # Save test audio
+                os.makedirs("debug_audio", exist_ok=True)
+                sf.write(f"debug_audio/generated_epoch_{epoch+1}.wav", waveform.numpy(), 16000)
+                print(f"[Saved] debug_audio/generated_epoch_{epoch+1}.wav")
+
 
 # Main
 if __name__ == "__main__":
