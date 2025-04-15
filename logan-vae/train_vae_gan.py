@@ -7,6 +7,7 @@ import soundfile as sf
 import os
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
+import matplotlib.pyplot as plt
 
 # Define the VAE-GAN components
 class Encoder(nn.Module):
@@ -63,61 +64,60 @@ class Discriminator(nn.Module):
     def forward(self, x):
         return self.model(x)
 
-# Define the loss functions
-def vae_loss(recon_x, x, mu, log_var):
-    recon_loss = nn.MSELoss()(recon_x, x)  # Reconstruction loss
-    kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())  # KL divergence
-    return recon_loss + kl_loss
-
+# GAN loss
 def gan_loss(discriminator_output, target):
-    # Clamp discriminator output to avoid numerical instability
     discriminator_output = torch.clamp(discriminator_output, 1e-7, 1 - 1e-7)
     return nn.BCELoss()(discriminator_output, target)
 
 # Dataset class for audio files
 class AudioDataset(Dataset):
-    def __init__(self, audio_dir, sample_rate=16000, n_fft=1024, hop_length=160, max_length=1000, n_mels=128):
+    def __init__(self, audio_dir, sample_rate=16000, n_fft=1024, hop_length=160,
+                 max_length=1000, n_mels=128, global_mean=None, global_std=None, normalize=True):
         self.audio_files = [os.path.join(audio_dir, f) for f in os.listdir(audio_dir) if f.endswith(".wav")]
         self.sample_rate = sample_rate
         self.n_fft = n_fft
         self.hop_length = hop_length
         self.max_length = max_length
         self.n_mels = n_mels
+        self.global_mean = global_mean
+        self.global_std = global_std
+        self.normalize = normalize
 
     def __len__(self):
         return len(self.audio_files)
 
     def __getitem__(self, idx):
         waveform, sr = sf.read(self.audio_files[idx])
-        if len(waveform.shape) > 1:  # Convert to mono if stereo
+        if len(waveform.shape) > 1:
             waveform = np.mean(waveform, axis=1)
         waveform = torch.tensor(waveform, dtype=torch.float32)
         if sr != self.sample_rate:
             resampler = T.Resample(sr, self.sample_rate)
             waveform = resampler(waveform)
-        spectrogram_transform = T.MelSpectrogram(
+
+        spectrogram = T.MelSpectrogram(
             sample_rate=self.sample_rate,
             n_fft=self.n_fft,
             hop_length=self.hop_length,
-            n_mels=self.n_mels,
-        )
-        spectrogram = spectrogram_transform(waveform)
+            n_mels=self.n_mels
+        )(waveform)
 
-        # Pad or truncate spectrogram to fixed length
+        # Pad or truncate
         if spectrogram.shape[1] < self.max_length:
             padding = torch.zeros((spectrogram.shape[0], self.max_length - spectrogram.shape[1]))
             spectrogram = torch.cat([spectrogram, padding], dim=1)
         else:
             spectrogram = spectrogram[:, :self.max_length]
 
-        # Normalize spectrogram
-        spectrogram = (spectrogram - spectrogram.mean()) / spectrogram.std()
+        # Normalize
+        if self.normalize and self.global_mean is not None and self.global_std is not None:
+            spectrogram = (spectrogram - self.global_mean) / self.global_std
 
-        return spectrogram.reshape(-1)  # Use reshape instead of view
+        return spectrogram.reshape(-1)
 
-# Training function
-def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, latent_dim=256, lr=1e-4, beta=0.1):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Training loop
+def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, latent_dim=256, lr=1e-4, beta=0.001):
+    device = torch.device("mps" if torch.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
     encoder.to(device)
     decoder.to(device)
     discriminator.to(device)
@@ -131,81 +131,99 @@ def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, laten
             real_data = real_data.to(device)
             batch_size = real_data.size(0)
 
-            # Train Encoder and Decoder (VAE)
+            # VAE step
             optimizer_E.zero_grad()
             optimizer_D.zero_grad()
             z, mu, log_var = encoder(real_data)
             recon_data = decoder(z)
             recon_loss = nn.MSELoss()(recon_data, real_data)
-            kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp())
-            vae_l = recon_loss + beta * kl_loss  # Adjust beta for KL loss
+            kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp()) / batch_size
+            vae_l = recon_loss + beta * kl_loss
             vae_l.backward()
             optimizer_E.step()
             optimizer_D.step()
 
-            # Train Discriminator
+            # Discriminator step
             optimizer_Dis.zero_grad()
             real_labels = torch.ones(batch_size, 1).to(device)
             fake_labels = torch.zeros(batch_size, 1).to(device)
-
-            # Real data loss
             real_output = discriminator(real_data)
             loss_real = gan_loss(real_output, real_labels)
 
-            # Fake data loss
             z = torch.randn(batch_size, latent_dim).to(device)
             fake_data = decoder(z)
             fake_output = discriminator(fake_data.detach())
             loss_fake = gan_loss(fake_output, fake_labels)
 
-            # Total discriminator loss
             loss_D = loss_real + loss_fake
             loss_D.backward()
             optimizer_Dis.step()
 
-            # Train Generator (Decoder)
+            # Generator step
             optimizer_D.zero_grad()
             z = torch.randn(batch_size, latent_dim).to(device)
             fake_data = decoder(z)
             fake_output = discriminator(fake_data)
-            loss_G = gan_loss(fake_output, real_labels)  # Generator tries to fool discriminator
+            loss_G = gan_loss(fake_output, real_labels)
             loss_G.backward()
             optimizer_D.step()
 
-        print(f"Epoch {epoch + 1}, Loss VAE: {vae_l.item()}, Loss D: {loss_D.item()}, Loss G: {loss_G.item()}")
+        print(f"Epoch {epoch + 1}, Loss VAE: {vae_l.item():.4f}, Loss D: {loss_D.item():.4f}, Loss G: {loss_G.item():.4f}")
 
-# Main function
+        # Save spectrogram visual every 10 epochs
+        if (epoch + 1) % 10 == 0:
+            decoder.eval()
+            with torch.no_grad():
+                z = torch.randn(1, latent_dim).to(device)
+                fake_spec = decoder(z).cpu().view(128, -1)
+                plt.imshow(fake_spec, aspect="auto", origin="lower")
+                plt.title(f"Epoch {epoch + 1}")
+                plt.colorbar()
+                plt.savefig(f"sample_spectrogram_{epoch+1}.png")
+                plt.close()
+
+# Main
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a VAE-GAN on audio data.")
     parser.add_argument("audio_dir", type=str, help="Path to directory containing audio files")
-    parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
-    parser.add_argument("--latent_dim", type=int, default=100, help="Dimension of the latent space")
-    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training")
-    parser.add_argument("--learning_rate", type=float, default=0.0002, help="Learning rate for training")
-    parser.add_argument("--output_model", type=str, default="vae_gan.pth", help="Path to save the trained model")
-    parser.add_argument("--max_length", type=int, default=1000, help="Maximum length of spectrogram (time dimension)")
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--latent_dim", type=int, default=100)
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--learning_rate", type=float, default=0.0002)
+    parser.add_argument("--output_model", type=str, default="vae_gan.pth")
+    parser.add_argument("--max_length", type=int, default=1000)
     args = parser.parse_args()
 
-    # Load dataset
-    dataset = AudioDataset(args.audio_dir, max_length=args.max_length)
+    # TEMP dataset to calculate mean/std
+    print("Computing dataset mean and std for normalization...")
+    temp_dataset = AudioDataset(args.audio_dir, max_length=args.max_length, normalize=False)
+    all_specs = torch.stack([temp_dataset[i] for i in range(len(temp_dataset))])
+    global_mean = all_specs.mean().item()
+    global_std = all_specs.std().item()
+    print(f"Global mean: {global_mean:.4f}, std: {global_std:.4f}")
+
+    # Final dataset with normalization
+    dataset = AudioDataset(args.audio_dir, max_length=args.max_length, global_mean=global_mean, global_std=global_std, normalize=True)
     dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
 
-    # Define model dimensions
-    input_dim = dataset[0].shape[0]  # Flattened spectrogram size
+    input_dim = dataset[0].shape[0]
     latent_dim = args.latent_dim
 
-    # Initialize models
     encoder = Encoder(input_dim, latent_dim)
     decoder = Decoder(latent_dim, input_dim)
     discriminator = Discriminator(input_dim)
 
-    # Train VAE-GAN
-    train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=args.epochs, latent_dim=latent_dim, lr=args.learning_rate)
+    train_vae_gan(encoder, decoder, discriminator, dataloader,
+                  epochs=args.epochs, latent_dim=latent_dim, lr=args.learning_rate)
 
-    # Save models
     torch.save({
         "encoder": encoder.state_dict(),
         "decoder": decoder.state_dict(),
         "discriminator": discriminator.state_dict(),
+        "latent_dim": latent_dim,
+        "input_dim": input_dim,
+        "global_mean": global_mean,
+        "global_std": global_std,
     }, args.output_model)
+
     print(f"Models saved to {args.output_model}")
