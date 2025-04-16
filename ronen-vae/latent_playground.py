@@ -25,7 +25,7 @@ def decode_and_play(vae, latent_vector, sample_rate=16000):
         n_stft=1025, n_mels=128, sample_rate=sample_rate
     )
     griffin_lim = torchaudio.transforms.GriffinLim(n_fft=2048, hop_length=512)
-    mel_spec = torch.exp(spectrogram) - 1e-9  # Inverse log-mel spectrogram
+    mel_spec = spectrogram #torch.exp(spectrogram) - 1e-9  # Inverse log-mel spectrogram
     stft_spec = mel_to_stft(mel_spec)
     waveform = griffin_lim(stft_spec)
 
@@ -38,14 +38,24 @@ def visualize_latent_space(vae, latent_dim=20, sample_rate=16000):
     if latent_dim != 2:
         raise ValueError("Latent space visualization requires a 2D latent space.")
 
-    # Generate a grid of points in the latent space
-    grid_x, grid_y = np.meshgrid(np.linspace(-3, 3, 30), np.linspace(-3, 3, 30))
+    # Generate a grid of points in the latent space based on the min and max coordinates
+    min_x = -17.6896
+    max_x = 21.4768
+    min_y = 0.4974
+    max_y = 27.653
+    
+    min_coords = np.array([-3.7284, -28.1620])
+    max_coords = np.array([13.4394, 7.3732])
+    grid_x, grid_y = np.meshgrid(
+        np.linspace(min_x, max_x, 30),
+        np.linspace(min_y, max_y, 30)
+    )
 
     # Create a figure for the latent space
     fig, ax = plt.subplots(figsize=(8, 8))
     ax.set_title("Latent Space")
-    ax.set_xlim(-3, 3)
-    ax.set_ylim(-3, 3)
+    ax.set_xlim(min_x, max_x)
+    ax.set_ylim(min_y, max_y)
     ax.set_xlabel("Latent Dimension 1")
     ax.set_ylabel("Latent Dimension 2")
 
