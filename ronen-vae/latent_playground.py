@@ -4,14 +4,18 @@ import torch
 import sounddevice as sd
 import torchaudio
 from model import VAE
-from nsynth_dataset import NsynthDataset
 
 
-def load_model(filepath, input_channels=1, latent_dim=20, input_dim=(128, 126)):
+import os
+
+def load_model(filepath, input_channels=1, latent_dim=2, input_dim=(128, 126)):
     """Load the VAE model with pre-trained weights."""
+    if not os.path.isfile(filepath):
+        raise FileNotFoundError(f"Model weights file not found at: {filepath}")
     vae = VAE(input_channels=input_channels, latent_dim=latent_dim, input_dim=input_dim)
     vae.load_weights(filepath)
     return vae
+
 
 def decode_and_play(vae, latent_vector, sample_rate=16000):
     """Decode a latent vector, convert to waveform, and play it."""
@@ -33,10 +37,14 @@ def decode_and_play(vae, latent_vector, sample_rate=16000):
     sd.play(waveform.squeeze().numpy(), samplerate=sample_rate)
     sd.wait()
 
+
 def visualize_latent_space(vae, latent_dim=20, sample_rate=16000):
-    """Visualize the latent space and allow sampling by clicking."""
-    if latent_dim != 2:
-        raise ValueError("Latent space visualization requires a 2D latent space.")
+    """Visualize a 64x64 color-coded latent space grid.
+       Click a square to select a latent point, e.g., (31,40), and decode the corresponding waveform.
+    """
+    grid_size = 64
+    # Create a 64x64 grid with a simple gradient for visualization
+    data = np.outer(np.linspace(0, 1, grid_size), np.linspace(0, 1, grid_size))
 
     # Generate a grid of points in the latent space based on the min and max coordinates
     min_x = -17.6896
@@ -59,25 +67,26 @@ def visualize_latent_space(vae, latent_dim=20, sample_rate=16000):
     ax.set_xlabel("Latent Dimension 1")
     ax.set_ylabel("Latent Dimension 2")
 
-    # Define the click event handler
     def on_click(event):
-        if event.inaxes == ax:
-            # Get the clicked coordinates
-            latent_vector = torch.tensor([event.xdata, event.ydata], dtype=torch.float32)
-            print(f"Clicked at: {latent_vector.numpy()}")
-            # Decode and play the corresponding waveform
+        if event.inaxes == ax and event.xdata is not None and event.ydata is not None:
+            # Map click to a grid cell by converting to int indices
+            x_idx = int(event.xdata)
+            y_idx = int(event.ydata)
+            print(f"Clicked on grid cell: ({x_idx}, {y_idx})")
+            # Create a latent vector and encode the selected grid cell in the first two dims
+            latent_vector = torch.zeros(latent_dim, dtype=torch.float32)
+            latent_vector[0] = x_idx
+            latent_vector[1] = y_idx
             decode_and_play(vae, latent_vector, sample_rate=sample_rate)
 
-    # Connect the click event to the handler
     fig.canvas.mpl_connect("button_press_event", on_click)
-
-    # Show the plot
     plt.show()
 
+
 if __name__ == "__main__":
-    # Load the pre-trained VAE model
+    # Load the pre-trained VAE model with latent_dim 2 to match the checkpoint
     model_path = "./weights/vae_weights.pth"
     vae = load_model(model_path, input_channels=1, latent_dim=2, input_dim=(128, 126))
 
-    # Visualize the latent space
+    # Visualize the latent space using both dimensions of the 2D latent space
     visualize_latent_space(vae, latent_dim=2, sample_rate=16000)
