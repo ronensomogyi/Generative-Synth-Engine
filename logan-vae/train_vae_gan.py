@@ -108,6 +108,11 @@ class AudioDataset(Dataset):
 
         return spectrogram.reshape(-1)
 
+def match_rms(ref, target, eps=1e-5):
+    ref_rms = torch.sqrt(torch.mean(ref**2) + eps)
+    target_rms = torch.sqrt(torch.mean(target**2) + eps)
+    return target * (ref_rms / target_rms)
+
 def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, latent_dim=64, lr=1e-4, beta=0.001, warmup_epochs=20):
     device = torch.device("mps" if torch.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
     encoder.to(device)
@@ -172,11 +177,12 @@ def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, laten
                 z, _, _ = encoder(real_data)
                 recon = decoder(z).cpu()[0]
                 recon_spec = recon.view(513, -1)
+                recon_spec = match_rms(real_data.cpu()[0].view(513, -1), recon_spec)
 
                 griffin_lim = T.GriffinLim(n_fft=1024, hop_length=160, n_iter=64)
                 waveform = griffin_lim(recon_spec.unsqueeze(0)).squeeze(0)
 
-                debug_dir = f"relu_debug_epoch_{epoch+1}"
+                debug_dir = f"rock_debug_epoch_{epoch+1}"
                 os.makedirs(debug_dir, exist_ok=True)
 
                 plt.plot(waveform.numpy())
