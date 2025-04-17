@@ -7,6 +7,7 @@ from model import VAE
 
 
 import os
+import json
 
 def load_model(filepath, input_channels=1, latent_dim=2, input_dim=(128, 126)):
     """Load the VAE model with pre-trained weights."""
@@ -47,10 +48,10 @@ def visualize_latent_space(vae, latent_dim=20, sample_rate=16000):
     data = np.outer(np.linspace(0, 1, grid_size), np.linspace(0, 1, grid_size))
 
     # Generate a grid of points in the latent space based on the min and max coordinates
-    min_x = -17.6896
-    max_x = 21.4768
-    min_y = 0.4974
-    max_y = 27.653
+    min_x = -20
+    max_x = 40
+    min_y = -15
+    max_y = 40
     
     min_coords = np.array([-3.7284, -28.1620])
     max_coords = np.array([13.4394, 7.3732])
@@ -59,6 +60,9 @@ def visualize_latent_space(vae, latent_dim=20, sample_rate=16000):
         np.linspace(min_y, max_y, 30)
     )
 
+    
+
+
     # Create a figure for the latent space
     fig, ax = plt.subplots(figsize=(8, 8))
     ax.set_title("Latent Space")
@@ -66,6 +70,22 @@ def visualize_latent_space(vae, latent_dim=20, sample_rate=16000):
     ax.set_ylim(min_y, max_y)
     ax.set_xlabel("Latent Dimension 1")
     ax.set_ylabel("Latent Dimension 2")
+
+# Load the latent families JSON file
+    latent_families_path = "./latent_families.json"
+    if not os.path.isfile(latent_families_path):
+        raise FileNotFoundError(f"Latent families file not found at: {latent_families_path}")
+
+    with open(latent_families_path, "r") as f:
+        latent_families = json.load(f)
+
+    # Extract points and plot them
+    for family, points in latent_families.items():
+        points = np.array(points)
+        ax.scatter(points[:, 0], points[:, 1], label=family, alpha=0.6)
+
+    # Add a legend to the plot
+    ax.legend()
 
     def on_click(event):
         if event.inaxes == ax and event.xdata is not None and event.ydata is not None:

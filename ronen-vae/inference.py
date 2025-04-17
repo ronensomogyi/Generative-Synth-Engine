@@ -5,6 +5,7 @@ from model import VAE
 from nsynth_dataset import NsynthDataset
 import sounddevice as sd
 import torchaudio
+import json
 
 
 LATENT_DIM = 2
@@ -34,39 +35,23 @@ def select_samples(dataset, num_samples=10):
     return images, labels
 
 
-def plot_reconstructed_images(original_spectrogram, reconstructed_spectrogram):
-    """Plot a single original and reconstructed spectrogram side by side."""
-    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
 
-    # Plot original spectrogram
-    axes[0].imshow(original_spectrogram.squeeze().numpy(), aspect="auto", origin="lower", cmap="viridis")
-    axes[0].axis("off")
-    axes[0].set_title("Original Spectrogram")
 
-    # Plot reconstructed spectrogram
-    axes[1].imshow(reconstructed_spectrogram.squeeze().numpy(), aspect="auto", origin="lower", cmap="viridis")
-    axes[1].axis("off")
-    axes[1].set_title("Reconstructed Spectrogram")
-
-    plt.show()
-
-def plot_images_encoded_in_latent_space(latent_representations, sample_labels):
-    """Visualize the latent space with labels."""
-    # Map string labels to numeric values
-    unique_labels = list(set(sample_labels))
-    label_to_numeric = {label: idx for idx, label in enumerate(unique_labels)}
-    numeric_labels = [label_to_numeric[label] for label in sample_labels]
-
+def plot_images_encoded_in_latent_space(latent_families_dict):
+    labels = latent_families_dict.keys()
+    for label in labels:
+        latent_points = latent_families_dict[label]
     plt.figure(figsize=(10, 10))
-    plt.scatter(latent_representations[:, 0],
-                latent_representations[:, 1], 
+    plt.scatter(latent_points[:, 0],
+                latent_points[:, 1], 
                 cmap="rainbow",
-                c=numeric_labels, 
+                c=sample_labels, 
                 alpha=0.5, 
                 s=2)
-    plt.colorbar(ticks=range(len(unique_labels)), label="Instrument Family")
-    plt.clim(-0.5, len(unique_labels) - 0.5)
+    plt.colorbar()
     plt.show()
+
+
 
 def sample_and_play_from_latent_space(vae, num_samples=5, latent_dim=LATENT_DIM, sample_rate=16000):
     """Sample random points from the latent space, decode them, and play the resulting spectrograms."""
@@ -136,28 +121,43 @@ if __name__ == "__main__":
 
     # Visualize latent space with 100 samples from each instrument family
     # Assuming instrument families are stored as a dictionary in the dataset metadata
-    families_dict = nsynth.family_spectrograms
+    families_dict = nsynth.specs_per_family
     all_images = []
     all_labels = []
 
-    for family, spectrograms in families_dict.items():
-        if len(spectrograms) > 0:
-            selected_indices = np.random.choice(len(spectrograms), 100, replace=True)
-            all_images.extend([spectrograms[i] for i in selected_indices])
-            all_labels.extend(family)
+    latent_families_dict = {}
+
+    for family, specs in families_dict.items():
+        if len(specs) > 0:
+            print(len(specs))
+            selected_indices = np.random.choice(len(specs), 1000, replace=True)
+
+            family_images = [specs[i] for i in selected_indices]
+
+            family_images_tensor = torch.stack(family_images).to(torch.float32).to(DEVICE)
+            with torch.no_grad():
+                _, latent_mu, _ = vae(family_images_tensor)
+                latent_families_dict[family] = latent_mu
+
+            # Convert latent_mu tensors to lists for JSON serialization
+            latent_families_dict_serializable = {family: latent_mu.cpu().numpy().tolist() for family, latent_mu in latent_families_dict.items()}
+
+            # Save the dictionary to a JSON file
+            output_path = "./latent_families.json"
+            with open(output_path, "w") as json_file:
+                json.dump(latent_families_dict_serializable, json_file)
+
+            print(f"Latent representations saved to {output_path}")
+            # family_images_tensor = torch.stack().to(torch.float32).to(DEVICE)
+            # with torch.no_grad():
+            #     _, latent_mu, _ = vae(family_images_tensor)
+            #     latent_families_dict[family] = latent_mu
+
         else:
             print(f"Warning: No spectrograms found for family '{family}'")
 
-    all_images_tensor = torch.stack(all_images).to(torch.float32).to(DEVICE)
-    with torch.no_grad():
-        _, latent_mu, _ = vae(all_images_tensor)
-        print(f"Latent mu: {latent_mu}")
-        max_coords = torch.max(latent_mu, dim=0).values
-        min_coords = torch.min(latent_mu, dim=0).values
-        print(f"Max coordinates in latent space: {max_coords}")
-        print(f"Min coordinates in latent space: {min_coords}")
 
-    plot_images_encoded_in_latent_space(latent_mu.cpu().numpy(), all_labels)
+    plot_images_encoded_in_latent_space(latent_families_dict)
 
     # # Sample and play from the latent space
     # sample_and_play_from_latent_space(vae, num_samples=5, latent_dim=LATENT_DIM, sample_rate=16000)

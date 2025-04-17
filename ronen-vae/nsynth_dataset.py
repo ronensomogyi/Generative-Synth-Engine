@@ -12,19 +12,20 @@ class NsynthDataset(Dataset):
             metadata_json (str): Path to the NSynth metadata file, e.g. '/nsynth/examples.json'
             audio_dir (str): Path to the folder containing WAV files, e.g. '/nsynth/audio'
         """
-        self.family_spectrograms = {  # Initialize a dictionary for each instrument family
+        self.specs_per_family = {  # Initialize a dictionary for each instrument family
             "keyboard": [],
             "organ": [],
             "guitar": [],
             "bass": [],
-            "strings": [],
+            "string": [],
             "reed": [],
             "mallet": [],
             "vocal": [],
             "flute": [],
             "synth_lead": [],
             "synth_pad": [],
-            "percussion": []
+            "percussion": [],
+            "brass": []
         }
 
         metadata_json = os.path.join(path, "examples.json")
@@ -34,27 +35,35 @@ class NsynthDataset(Dataset):
             self.metadata = json.load(f)
     
         
-        
-        # Collect a list of (wav_path, label) pairs
-        # We assume each key in metadata matches a wav file name in `audio_dir/`
-        self.samples = []
-        for example_id, attrs in self.metadata.items():
-            pitch_label = attrs["pitch"]  # or any other field you'd like as a label
-            #if pitch_label % 12 != 0: continue # skip any non c notes
-            instrument_family = attrs["instrument_family_str"]  # or any other field you'd like as a label
-            if instrument_family in ["mallet", "bass"]: continue # skip mallet and bass
-            wav_path = os.path.join(self.audio_dir, f"{example_id}.wav")
-            self.samples.append((wav_path, instrument_family))
-
-
-
-        # 3) Define the torchaudio MelSpectrogram transform once
         self.mel_transform = torchaudio.transforms.MelSpectrogram(
             sample_rate=16000,
             n_fft=2048,
             hop_length=512,
             n_mels=128
         )
+
+        # Collect a list of (wav_path, label) pairs
+        # We assume each key in metadata matches a wav file name in `audio_dir/`
+        self.samples = []
+        for example_id, attrs in self.metadata.items():
+            pitch_label = attrs["pitch"]  # or any other field you'd like as a label
+            if pitch_label % 12 != 0: continue # skip any non c notes
+            instrument_family = attrs["instrument_family_str"]  # or any other field you'd like as a label
+            if instrument_family in ["mallet", "bass"]: continue # skip mallet and bass
+            wav_path = os.path.join(self.audio_dir, f"{example_id}.wav")
+            self.samples.append((wav_path, instrument_family))
+            waveform, sr = torchaudio.load(wav_path)
+            if sr != 16000:
+                resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=16000)
+                waveform = resampler(waveform)
+                sr = 16000
+            mel_spec = self.mel_transform(waveform)  # shape: [channels=1, n_mels=128, time_frames]
+            log_mel_spec = torch.log(mel_spec + 1e-9)
+            self.specs_per_family[instrument_family].append(log_mel_spec)  # Initialize empty list for each family
+
+
+
+        
 
     def __len__(self):
         return len(self.samples)
@@ -78,9 +87,6 @@ class NsynthDataset(Dataset):
         mel_spec = self.mel_transform(waveform)  # shape: [channels=1, n_mels=128, time_frames]
         log_mel_spec = torch.log(mel_spec + 1e-9)
 
-        if instrument_family_label not in self.family_spectrograms:
-            self.family_spectrograms[instrument_family_label] = []
-        self.family_spectrograms[instrument_family_label].append(log_mel_spec)
         # 8) Return (log-mel-spectrogram, pitch_label)
         return log_mel_spec, instrument_family_label
 

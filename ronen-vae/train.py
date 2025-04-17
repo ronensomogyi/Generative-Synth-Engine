@@ -26,7 +26,7 @@ def train(train_loader, model, optimizer, loss_fn):
 
         loop = tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch + 1}/{NUM_EPOCHS}")
         alpha = RECON_COEF
-        beta = epoch / 10.0  # KL annealing coefficient
+        beta = (epoch / 10.0)*5  # KL annealing coefficient
 
         for i, (x, _) in loop:
             x = x.to(DEVICE).view(x.shape[0], 1, 128, 126)  # Reshape for Conv2D input
@@ -43,6 +43,7 @@ def train(train_loader, model, optimizer, loss_fn):
             optimizer.step()
             loop.set_postfix(loss=loss.item())
 
+            model.save_weights(filepath=f'./weights/vae_epoch{epoch+1}.pth')  # Save weights after each batch
 
         # Save model weights if this epoch has the lowest loss
         if loss.item() < best_loss:
