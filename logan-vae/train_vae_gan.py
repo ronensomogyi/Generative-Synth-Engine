@@ -9,7 +9,6 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Define the VAE-GAN components
 class Encoder(nn.Module):
     def __init__(self, input_dim, latent_dim):
         super(Encoder, self).__init__()
@@ -31,7 +30,7 @@ class Encoder(nn.Module):
         h = self.model(x)
         mu = self.mu(h)
         log_var = self.log_var(h)
-        log_var = torch.clamp(log_var, min=-10.0, max=10.0)  # Clamp log_var to prevent KL blowup
+        log_var = torch.clamp(log_var, min=-10.0, max=10.0)
         z = self.reparameterize(mu, log_var)
         return z, mu, log_var
 
@@ -43,12 +42,12 @@ class Decoder(nn.Module):
             nn.ReLU(),
             nn.Linear(128, 256),
             nn.ReLU(),
-            nn.Linear(256, output_dim),
-            nn.ReLU(),  # Instead of Tanh()
+            nn.Linear(256, output_dim)
         )
 
     def forward(self, z):
-        return self.model(z)
+        output = self.model(z)
+        return torch.clamp(output, min=1e-5)
 
 class Discriminator(nn.Module):
     def __init__(self, input_dim):
@@ -56,21 +55,19 @@ class Discriminator(nn.Module):
         self.model = nn.Sequential(
             nn.Linear(input_dim, 256),
             nn.LeakyReLU(0.2),
+            nn.Dropout(0.3),
             nn.Linear(256, 128),
             nn.LeakyReLU(0.2),
-            nn.Linear(128, 1),
-            nn.Sigmoid(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 1)
         )
 
     def forward(self, x):
         return self.model(x)
 
-# GAN loss
 def gan_loss(discriminator_output, target):
-    discriminator_output = torch.clamp(discriminator_output, 1e-7, 1 - 1e-7)
-    return nn.BCELoss()(discriminator_output, target)
+    return nn.BCEWithLogitsLoss()(discriminator_output, target)
 
-# Dataset class for audio files
 class AudioDataset(Dataset):
     def __init__(self, audio_dir, sample_rate=16000, n_fft=1024, hop_length=160,
                  max_length=1000, n_mels=128, global_mean=None, global_std=None, normalize=True):
@@ -82,7 +79,7 @@ class AudioDataset(Dataset):
         self.n_mels = n_mels
         self.global_mean = global_mean
         self.global_std = global_std
-        self.normalize = normalize
+        self.normalize = False
 
     def __len__(self):
         return len(self.audio_files)
@@ -96,28 +93,27 @@ class AudioDataset(Dataset):
             resampler = T.Resample(sr, self.sample_rate)
             waveform = resampler(waveform)
 
-        spectrogram = T.MelSpectrogram(
-            sample_rate=self.sample_rate,
-            n_fft=self.n_fft,
-            hop_length=self.hop_length,
-            n_mels=self.n_mels
-        )(waveform)
+        spectrogram = torch.abs(
+            T.Spectrogram(n_fft=self.n_fft, hop_length=self.hop_length)(waveform)
+        )
 
-        # Pad or truncate
         if spectrogram.shape[1] < self.max_length:
             padding = torch.zeros((spectrogram.shape[0], self.max_length - spectrogram.shape[1]))
             spectrogram = torch.cat([spectrogram, padding], dim=1)
         else:
             spectrogram = spectrogram[:, :self.max_length]
 
-        # Normalize
         if self.normalize and self.global_mean is not None and self.global_std is not None:
             spectrogram = (spectrogram - self.global_mean) / self.global_std
 
         return spectrogram.reshape(-1)
 
-# Training loop
-def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, latent_dim=256, lr=1e-4, beta=0.001):
+def match_rms(ref, target, eps=1e-5):
+    ref_rms = torch.sqrt(torch.mean(ref**2) + eps)
+    target_rms = torch.sqrt(torch.mean(target**2) + eps)
+    return target * (ref_rms / target_rms)
+
+def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, latent_dim=64, lr=1e-4, beta=0.001, warmup_epochs=20):
     device = torch.device("mps" if torch.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
     encoder.to(device)
     decoder.to(device)
@@ -125,21 +121,20 @@ def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, laten
 
     optimizer_E = optim.Adam(encoder.parameters(), lr=lr)
     optimizer_D = optim.Adam(decoder.parameters(), lr=lr)
-    optimizer_Dis = optim.Adam(discriminator.parameters(), lr=lr)
+    optimizer_Dis = optim.Adam(discriminator.parameters(), lr=1e-5)
 
     for epoch in range(epochs):
         for real_data in dataloader:
             real_data = real_data.to(device)
             batch_size = real_data.size(0)
 
-            # VAE step
             optimizer_E.zero_grad()
             optimizer_D.zero_grad()
             z, mu, log_var = encoder(real_data)
             recon_data = decoder(z)
-            recon_loss = nn.MSELoss()(recon_data, real_data)
+            recon_loss = nn.L1Loss()(recon_data, real_data)
             kl_loss = -0.5 * torch.sum(1 + log_var - mu.pow(2) - log_var.exp()) / batch_size
-            beta_schedule = min(1.0, epoch / 50)  # KL annealing
+            beta_schedule = min(1.0, epoch / 50)
             vae_l = recon_loss + beta_schedule * beta * kl_loss
             vae_l.backward()
             torch.nn.utils.clip_grad_norm_(encoder.parameters(), 1.0)
@@ -147,89 +142,83 @@ def train_vae_gan(encoder, decoder, discriminator, dataloader, epochs=100, laten
             optimizer_E.step()
             optimizer_D.step()
 
-            # Discriminator step
-            optimizer_Dis.zero_grad()
-            real_labels = torch.ones(batch_size, 1).to(device)
-            fake_labels = torch.zeros(batch_size, 1).to(device)
-            real_output = discriminator(real_data)
-            loss_real = gan_loss(real_output, real_labels)
+            if epoch >= warmup_epochs:
+                optimizer_Dis.zero_grad()
+                real_labels = torch.full((batch_size, 1), 0.9).to(device)
+                fake_labels = torch.full((batch_size, 1), 0.1).to(device)
+                real_output = discriminator(real_data)
+                loss_real = gan_loss(real_output, real_labels)
 
-            z = torch.randn(batch_size, latent_dim).to(device)
-            fake_data = decoder(z)
-            fake_output = discriminator(fake_data.detach())
-            loss_fake = gan_loss(fake_output, fake_labels)
+                z = torch.randn(batch_size, latent_dim).to(device)
+                fake_data = decoder(z)
+                fake_output = discriminator(fake_data.detach())
+                loss_fake = gan_loss(fake_output, fake_labels)
 
-            loss_D = loss_real + loss_fake
-            loss_D.backward()
-            optimizer_Dis.step()
+                loss_D = loss_real + loss_fake
+                loss_D.backward()
+                optimizer_Dis.step()
 
-            # Generator step
-            optimizer_D.zero_grad()
-            z = torch.randn(batch_size, latent_dim).to(device)
-            fake_data = decoder(z)
-            fake_output = discriminator(fake_data)
-            loss_G = gan_loss(fake_output, real_labels)
-            loss_G.backward()
-            torch.nn.utils.clip_grad_norm_(decoder.parameters(), 1.0)
-            optimizer_D.step()
+                optimizer_D.zero_grad()
+                z = torch.randn(batch_size, latent_dim).to(device)
+                fake_data = decoder(z)
+                fake_output = discriminator(fake_data)
+                loss_G = gan_loss(fake_output, real_labels)
+                loss_G.backward()
+                torch.nn.utils.clip_grad_norm_(decoder.parameters(), 1.0)
+                optimizer_D.step()
 
-        print(f"Epoch {epoch + 1}, Loss VAE: {vae_l.item():.4f}, Loss D: {loss_D.item():.4f}, Loss G: {loss_G.item():.4f}")
+        print(f"Epoch {epoch + 1}, Loss VAE: {vae_l.item():.4f}")
 
- # Save spectrogram visual every 10 epochs
         if (epoch + 1) % 10 == 0:
+            encoder.eval()
             decoder.eval()
             with torch.no_grad():
-                z = torch.randn(1, latent_dim).to(device)
-                fake_flat = decoder(z).cpu().squeeze(0)
-                fake_spec = fake_flat.view(128, -1)
+                real_data = next(iter(dataloader)).to(device)
+                z, _, _ = encoder(real_data)
+                recon = decoder(z).cpu()[0]
+                recon_spec = recon.view(513, -1)
+                recon_spec = match_rms(real_data.cpu()[0].view(513, -1), recon_spec)
 
-                print(f"[Epoch {epoch+1}] Fake spectrogram stats: min={fake_spec.min():.4f}, max={fake_spec.max():.4f}, mean={fake_spec.mean():.4f}, std={fake_spec.std():.4f}")
+                griffin_lim = T.GriffinLim(n_fft=1024, hop_length=160, n_iter=64)
+                waveform = griffin_lim(recon_spec.unsqueeze(0)).squeeze(0)
 
-                # Denormalize the spectrogram
-                denorm_fake_spec = fake_spec * global_std + global_mean
-                denorm_fake_spec = torch.relu(denorm_fake_spec)
+                debug_dir = f"rock_debug_epoch_{epoch+1}"
+                os.makedirs(debug_dir, exist_ok=True)
 
-                # Save raw (denorm) and normalized spectrogram
-                plt.figure(figsize=(10, 4))
-                plt.imshow(denorm_fake_spec, aspect="auto", origin="lower")
-                plt.title(f"Denormalized Spectrogram (Epoch {epoch + 1})")
-                plt.colorbar()
-                plt.savefig(f"denorm_spectrogram_epoch_{epoch+1}.png")
+                plt.plot(waveform.numpy())
+                plt.title("Reconstructed waveform")
+                plt.savefig(f"{debug_dir}/waveform.png")
                 plt.close()
 
+                sf.write(f"{debug_dir}/reconstructed.wav", waveform.numpy(), 16000)
+                print(f"[Saved] {debug_dir}/reconstructed.wav")
+
                 plt.figure(figsize=(10, 4))
-                plt.imshow(fake_spec, aspect="auto", origin="lower")
-                plt.title(f"Raw Decoder Output (Epoch {epoch + 1})")
+                plt.imshow(recon_spec, aspect="auto", origin="lower")
+                plt.title(f"Reconstructed Spectrogram (Epoch {epoch + 1})")
                 plt.colorbar()
-                plt.savefig(f"raw_decoder_output_epoch_{epoch+1}.png")
+                plt.tight_layout()
+                plt.savefig(f"{debug_dir}/spectrogram.png")
                 plt.close()
 
-                # Optional: Try waveform inversion
-                n_fft = 1024
-                max_length = fake_spec.shape[1]
-                upsampled = fake_spec.unsqueeze(0).unsqueeze(0)
-                upsampled = torch.nn.functional.interpolate(upsampled, size=(n_fft // 2 + 1, max_length), mode="bilinear")
-                upsampled = upsampled.squeeze(0).squeeze(0)
-
-                # Try Griffin-Lim
-                print("[Debug] Running Griffin-Lim for audio inversion")
-                griffin_lim = T.GriffinLim(n_fft=n_fft, hop_length=256)
-                waveform = griffin_lim(upsampled.unsqueeze(0)).squeeze(0)
-
-                print(f"[Waveform] min={waveform.min():.4f}, max={waveform.max():.4f}, mean={waveform.mean():.4f}, std={waveform.std():.4f}")
-
-                # Save test audio
-                os.makedirs("debug_audio", exist_ok=True)
-                sf.write(f"debug_audio/generated_epoch_{epoch+1}.wav", waveform.numpy(), 16000)
-                print(f"[Saved] debug_audio/generated_epoch_{epoch+1}.wav")
+                z_np = z.cpu().numpy()
+                plt.figure(figsize=(6, 6))
+                plt.scatter(z_np[:, 0], z_np[:, 1], alpha=0.6)
+                plt.title(f"Latent Space (Epoch {epoch + 1})")
+                plt.xlabel("z[0]")
+                plt.ylabel("z[1]")
+                plt.grid(True)
+                plt.tight_layout()
+                plt.savefig(f"{debug_dir}/latent_space.png")
+                plt.close()
 
 # Main
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a VAE-GAN on audio data.")
     parser.add_argument("audio_dir", type=str, help="Path to directory containing audio files")
     parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--latent_dim", type=int, default=100)
-    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--latent_dim", type=int, default=32)
+    parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--learning_rate", type=float, default=0.00001)
     parser.add_argument("--output_model", type=str, default="vae_gan.pth")
     parser.add_argument("--max_length", type=int, default=1000)
