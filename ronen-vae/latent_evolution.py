@@ -55,7 +55,7 @@ if __name__ == "__main__":
 
     # Function to plot latent space
     def plot_images_encoded_in_latent_space(latent_families_dict, epoch):
-        plt.figure(figsize=(10, 10))
+        plt.figure(figsize=(19.2, 10.8), dpi=100)
         colors = plt.cm.rainbow(np.linspace(0, 1, len(latent_families_dict)))
         
         for (label, latent_points), color in zip(latent_families_dict.items(), colors):
